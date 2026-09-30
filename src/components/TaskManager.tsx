@@ -13,9 +13,29 @@ import LoadingState from "./LoadingState";
 import ErrorState from "./ErrorState";
 
 type LoadState = "loading" | "error" | "ready";
-type FormState = { mode: "closed" } | { mode: "add" } | { mode: "edit"; task: Task };
+type FormState =
+  | { mode: "closed" }
+  | { mode: "add" }
+  | { mode: "edit"; task: Task };
 
-const defaultFilters: Filters = { search: "", status: "all", priority: "all" };
+const defaultFilters: Filters = {
+  search: "",
+  status: "all",
+  priority: "all",
+};
+
+// Convert frontend "done" to backend "completed"
+function toApiStatus(status: string) {
+  return status === "done" ? "completed" : status;
+}
+
+// Convert backend "completed" to frontend "done"
+function toFrontendTask(task: any): Task {
+  return {
+    ...task,
+    status: task.status === "completed" ? "done" : task.status,
+  };
+}
 
 export default function TaskManager() {
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -25,8 +45,10 @@ export default function TaskManager() {
 
   const loadTasks = useCallback(async () => {
     setLoadState("loading");
+
     try {
-      setTasks(await fetchTasks());
+      const loadedTasks = await fetchTasks();
+      setTasks(loadedTasks);
       setLoadState("ready");
     } catch {
       setLoadState("error");
@@ -37,53 +59,202 @@ export default function TaskManager() {
     loadTasks();
   }, [loadTasks]);
 
-  const closeForm = useCallback(() => setForm({ mode: "closed" }), []);
+  const closeForm = useCallback(() => {
+    setForm({ mode: "closed" });
+  }, []);
 
   const visibleTasks = useMemo(() => {
     const q = filters.search.trim().toLowerCase();
+
     return tasks
-      .filter((t) => filters.status === "all" || t.status === filters.status)
-      .filter((t) => filters.priority === "all" || t.priority === filters.priority)
-      .filter((t) => !q || [t.title, t.subject, t.description].some((f) => f.toLowerCase().includes(q)))
+      .filter(
+        (t) =>
+          filters.status === "all" ||
+          t.status === filters.status
+      )
+      .filter(
+        (t) =>
+          filters.priority === "all" ||
+          t.priority === filters.priority
+      )
+      .filter(
+        (t) =>
+          !q ||
+          [t.title, t.subject, t.description].some((f) =>
+            f.toLowerCase().includes(q)
+          )
+      )
       .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
   }, [tasks, filters]);
 
-  function saveTask(values: TaskFormValues) {
-    if (form.mode === "edit") {
-      const id = form.task.id;
-      setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, ...values } : t)));
-    } else {
-      setTasks((prev) => [...prev, { id: Date.now().toString(), ...values }]);
+  // ADD / EDIT TASK
+  async function saveTask(values: TaskFormValues) {
+    try {
+      const payload = {
+        title: values.title,
+        description: values.description,
+        subject: values.subject,
+        dueDate: values.dueDate,
+        priority: values.priority,
+        status: toApiStatus(values.status),
+      };
+
+      // EDIT
+      if (form.mode === "edit") {
+        const id = form.task.id;
+
+        const response = await fetch(`/api/tasks/${id}`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+          throw new Error("Could not update task");
+        }
+
+        const data = await response.json();
+
+        const updatedTask = toFrontendTask(data.task);
+
+        setTasks((prev) =>
+          prev.map((task) =>
+            task.id === id ? updatedTask : task
+          )
+        );
+      }
+
+      // ADD
+      else {
+        const response = await fetch("/api/tasks", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+          throw new Error("Could not create task");
+        }
+
+        const data = await response.json();
+
+        const newTask = toFrontendTask(data.task);
+
+        setTasks((prev) => [newTask, ...prev]);
+      }
+
+      closeForm();
+    } catch (error) {
+      console.error(error);
+      alert("Something went wrong while saving the task.");
     }
-    closeForm();
   }
 
-  function deleteTask(task: Task) {
-    if (window.confirm(`Delete "${task.title}"? This cannot be undone.`)) {
-      setTasks((prev) => prev.filter((t) => t.id !== task.id));
+  // DELETE TASK
+  async function deleteTask(task: Task) {
+    if (!window.confirm(`Delete "${task.title}"? This cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/tasks/${task.id}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        throw new Error("Could not delete task");
+      }
+
+      setTasks((prev) =>
+        prev.filter((t) => t.id !== task.id)
+      );
+    } catch (error) {
+      console.error(error);
+      alert("Something went wrong while deleting the task.");
     }
   }
 
-  function completeTask(task: Task) {
-    setTasks((prev) => prev.map((t) => (t.id === task.id ? { ...t, status: "done" } : t)));
+  // COMPLETE TASK
+  async function completeTask(task: Task) {
+    try {
+      const payload = {
+        title: task.title,
+        description: task.description,
+        subject: task.subject,
+        dueDate: task.dueDate,
+        priority: task.priority,
+        status: "completed",
+      };
+
+      const response = await fetch(`/api/tasks/${task.id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        throw new Error("Could not complete task");
+      }
+
+      const data = await response.json();
+
+      const updatedTask = toFrontendTask(data.task);
+
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === task.id ? updatedTask : t
+        )
+      );
+    } catch (error) {
+      console.error(error);
+      alert("Something went wrong while completing the task.");
+    }
   }
 
-  const count = (status: Task["status"]) => tasks.filter((t) => t.status === status).length;
+  const count = (status: Task["status"]) =>
+    tasks.filter((t) => t.status === status).length;
 
   return (
     <div className="space-y-6">
       <Header onAddTask={() => setForm({ mode: "add" })} />
 
       {loadState === "loading" && <LoadingState />}
-      {loadState === "error" && <ErrorState onRetry={loadTasks} />}
+
+      {loadState === "error" && (
+        <ErrorState onRetry={loadTasks} />
+      )}
 
       {loadState === "ready" && (
         <>
-          <section className="grid grid-cols-2 gap-4 lg:grid-cols-4" aria-label="Summary">
-            <StatCard label="Total tasks" value={tasks.length} />
-            <StatCard label="To do" value={count("todo")} />
-            <StatCard label="In progress" value={count("in-progress")} />
-            <StatCard label="Completed" value={count("done")} />
+          <section
+            className="grid grid-cols-2 gap-4 lg:grid-cols-4"
+            aria-label="Summary"
+          >
+            <StatCard
+              label="Total tasks"
+              value={tasks.length}
+            />
+
+            <StatCard
+              label="To do"
+              value={count("todo")}
+            />
+
+            <StatCard
+              label="In progress"
+              value={count("in-progress")}
+            />
+
+            <StatCard
+              label="Completed"
+              value={count("done")}
+            />
           </section>
 
           {tasks.length === 0 ? (
@@ -94,22 +265,41 @@ export default function TaskManager() {
               onAction={() => setForm({ mode: "add" })}
             />
           ) : (
-            <section aria-label="Tasks" className="space-y-4">
-              <TaskFilters filters={filters} onChange={setFilters} />
-              <p className="text-sm text-slate-600" aria-live="polite">
-                Showing {visibleTasks.length} of {tasks.length} tasks
+            <section
+              aria-label="Tasks"
+              className="space-y-4"
+            >
+              <TaskFilters
+                filters={filters}
+                onChange={setFilters}
+              />
+
+              <p
+                className="text-sm text-slate-600"
+                aria-live="polite"
+              >
+                Showing {visibleTasks.length} of{" "}
+                {tasks.length} tasks
               </p>
+
               {visibleTasks.length === 0 ? (
                 <EmptyState
                   title="No matching tasks"
                   message="Try a different search or clear the filters."
                   actionLabel="Clear filters"
-                  onAction={() => setFilters(defaultFilters)}
+                  onAction={() =>
+                    setFilters(defaultFilters)
+                  }
                 />
               ) : (
                 <TaskList
                   tasks={visibleTasks}
-                  onEdit={(task) => setForm({ mode: "edit", task })}
+                  onEdit={(task) =>
+                    setForm({
+                      mode: "edit",
+                      task,
+                    })
+                  }
                   onDelete={deleteTask}
                   onComplete={completeTask}
                 />
@@ -121,8 +311,16 @@ export default function TaskManager() {
 
       {form.mode !== "closed" && (
         <TaskFormModal
-          key={form.mode === "edit" ? form.task.id : "add"}
-          task={form.mode === "edit" ? form.task : undefined}
+          key={
+            form.mode === "edit"
+              ? form.task.id
+              : "add"
+          }
+          task={
+            form.mode === "edit"
+              ? form.task
+              : undefined
+          }
           onSubmit={saveTask}
           onClose={closeForm}
         />
