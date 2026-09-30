@@ -1,5 +1,9 @@
 import { Task } from "@/types/task";
 
+type ApiTask = Omit<Task, "status"> & {
+  status: "todo" | "in-progress" | "completed";
+};
+
 export async function fetchTasks(): Promise<Task[]> {
   const response = await fetch("/api/tasks");
 
@@ -7,9 +11,9 @@ export async function fetchTasks(): Promise<Task[]> {
     throw new Error("Could not load tasks");
   }
 
-  const data = await response.json();
+  const data: { tasks: ApiTask[] } = await response.json();
 
-  return data.tasks.map((task: Task) => ({
+  return data.tasks.map((task) => ({
     ...task,
     status: task.status === "completed" ? "done" : task.status,
   }));
