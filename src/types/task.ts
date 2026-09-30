@@ -6,7 +6,10 @@ export interface Task {
   title: string;
   description: string;
   subject: string;
-  dueDate: string; // ISO date, e.g. "2026-10-05"
+  dueDate: string; // "YYYY-MM-DD"
   priority: Priority;
   status: Status;
 }
+
+// What the Add/Edit form works with (the id is created separately).
+export type TaskFormValues = Omit<Task, "id">;
