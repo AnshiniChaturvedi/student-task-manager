@@ -9,10 +9,11 @@ export type ApiStatus = (typeof STATUSES)[number];
 
 // Shape of a document in the "tasks" collection.
 export interface TaskDoc {
+  userId: string;
   title: string;
   description: string;
   subject: string;
-  dueDate: string; // "YYYY-MM-DD"
+  dueDate: string;
   priority: ApiPriority;
   status: ApiStatus;
   createdAt: Date;
@@ -36,8 +37,7 @@ export function serializeTask(doc: WithId<TaskDoc>) {
 export function parseObjectId(id: string): ObjectId | null {
   return /^[a-fA-F0-9]{24}$/.test(id) ? new ObjectId(id) : null;
 }
-
-type TaskInput = Omit<TaskDoc, "createdAt">;
+type TaskInput = Omit<TaskDoc, "createdAt" | "userId">;
 type ValidationResult =
   | { ok: true; data: TaskInput }
   | { ok: false; errors: string[] };
